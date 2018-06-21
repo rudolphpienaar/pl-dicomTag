@@ -41,6 +41,7 @@ import      pfmisc
 import      error              
 
 import      pudb
+import      hashlib
 
 class dicomTag(object):
     """
@@ -132,42 +133,10 @@ class dicomTag(object):
 
         return astr
 
-    def __init__(self, **kwargs):
-
-        def imageFileName_process(str_imageFile):
-            pudb.set_trace()
-            b_OK                = False
-            l_indexAndFile      = str_imageFile.split(':')
-            if len(l_indexAndFile) == 1:
-                b_OK            = True
-                self.str_outputImageFile    = l_indexAndFile[0]
-            if len(l_indexAndFile) == 2:
-                b_OK            = True
-                self.str_outputImageFile    = l_indexAndFile[1]
-                self.str_imageIndex         = l_indexAndFile[0]
-            if not b_OK:
-                self.dp.qprint("Invalid image specifier.", comms = 'error')
-                error.fatal(self, 'imageFileSpecFail')
-            if len(self.str_outputImageFile):
-                self.b_convertToImg         = True
-
-        def tagList_process(str_tagList):
-            self.str_tagList            = str_tagList
-            if len(self.str_tagList):
-                self.b_tagList          = True
-                self.l_tag              = self.str_tagList.split(',')
-
-        def tagFile_process(str_tagFile):
-            self.str_tagFile            = str_tagFile
-            if len(self.str_tagFile):
-                self.b_tagFile          = True
-                with open(self.str_tagFile) as f:
-                    self.l_tag          =  [x.strip('\n') for x in f.readlines()]
-
-        def outputFile_process(str_outputFile):
-            self.str_outputFileType     = str_outputFile
-            self.l_outputFileType       = self.str_outputFileType.split(',')
-
+    def declare_selfvars(self):
+        """
+        A block to declare self variables
+        """
         #
         # Object desc block
         #
@@ -213,17 +182,6 @@ class dicomTag(object):
         self.str_outputImageFile       = ''
         self.str_imageIndex            = ''
 
-        # A logger
-        self.dp                        = pfmisc.debug(    
-                                            verbosity   = 0,
-                                            level       = -1,
-                                            within      = self.__name__
-                                            )
-        self.log                       = pfmisc.Message()
-        self.log.syslog(True)
-        self.tic_start                 = 0.0
-        self.pp                        = pprint.PrettyPrinter(indent=4)
-
         # Tags
         self.b_tagList                 = False
         self.b_tagFile                 = False
@@ -232,7 +190,51 @@ class dicomTag(object):
         self.l_tag                     = []
 
         # Flags
-        self.b_printToScreen            = False
+        self.b_printToScreen           = False
+
+        self.dp                        = None
+        self.log                       = None
+        self.tic_start                 = 0.0
+        self.pp                        = pprint.PrettyPrinter(indent=4)
+        self.verbosityLevel            = -1
+
+    def __init__(self, **kwargs):
+
+        def imageFileName_process(str_imageFile):
+            b_OK                = False
+            l_indexAndFile      = str_imageFile.split(':')
+            if len(l_indexAndFile) == 1:
+                b_OK            = True
+                self.str_outputImageFile    = l_indexAndFile[0]
+            if len(l_indexAndFile) == 2:
+                b_OK            = True
+                self.str_outputImageFile    = l_indexAndFile[1]
+                self.str_imageIndex         = l_indexAndFile[0]
+            if not b_OK:
+                self.dp.qprint("Invalid image specifier.", comms = 'error')
+                error.fatal(self, 'imageFileSpecFail')
+            if len(self.str_outputImageFile):
+                self.b_convertToImg         = True
+
+        def tagList_process(str_tagList):
+            self.str_tagList            = str_tagList
+            if len(self.str_tagList):
+                self.b_tagList          = True
+                self.l_tag              = self.str_tagList.split(',')
+
+        def tagFile_process(str_tagFile):
+            self.str_tagFile            = str_tagFile
+            if len(self.str_tagFile):
+                self.b_tagFile          = True
+                with open(self.str_tagFile) as f:
+                    self.l_tag          =  [x.strip('\n') for x in f.readlines()]
+
+        def outputFile_process(str_outputFile):
+            self.str_outputFileType     = str_outputFile
+            self.l_outputFileType       = self.str_outputFileType.split(',')
+
+        # pudb.set_trace()
+        self.declare_selfvars()
 
         for key, value in kwargs.items():
             if key == "inputDir":           self.str_inputDir          = value
@@ -245,9 +247,24 @@ class dicomTag(object):
             if key == 'imageFile':          imageFileName_process(value)
             if key == 'tagFile':            tagFile_process(value)
             if key == 'tagList':            tagList_process(value)
+            if key == 'verbosity':          self.verbosityLevel         = int(value)
+
+        # Set logging
+        self.dp                        = pfmisc.debug(    
+                                            verbosity   = self.verbosityLevel,
+                                            level       = 0,
+                                            within      = self.__name__
+                                            )
+        self.log                       = pfmisc.Message()
+        self.log.syslog(True)
 
         if not len(self.str_inputDir): self.str_inputDir = '.'
-        pudb.set_trace()
+
+    def simpleProgress_show(self, index, total):
+        f_percent   = index/total*100
+        str_num     = "[%3d/%3d: %5.2f%%] " % (index, total, f_percent)
+        str_bar     = "*" * int(f_percent)
+        self.dp.qprint("%s%s" % (str_num, str_bar))
 
     def dirTree_create(self, **kwargs):
         """
@@ -259,6 +276,8 @@ class dicomTag(object):
         l_files     = []
         b_status    = False
         str_path    = ''
+        l_dirsHere  = []
+        l_filesHere = []
 
         for k, v in kwargs.items():
             if k == 'root':  str_topDir  = v
@@ -267,10 +286,22 @@ class dicomTag(object):
             b_status = True
             str_path = root.split(os.sep)
             if dirs:
-                l_dirs.append([root + '/' + x for x in dirs])
+                l_dirsHere = [root + '/' + x for x in dirs]
+                l_dirs.append(l_dirsHere)
+                self.dp.qprint('Appending dirs to search space:\n')
+                self.dp.qprint("\n" + self.pp.pformat(l_dirsHere))
             if files:
-                l_files.append([root + '/' + y for y in files])
-        
+                l_filesHere = [root + '/' + y for y in files]
+                if len(self.str_inputFile):
+                    l_hit = [s for s in l_filesHere if self.str_inputFile in s]
+                    if l_hit: 
+                        l_filesHere = l_hit
+                    else:
+                        l_filesHere = []
+                if l_filesHere:
+                    l_files.append(l_filesHere)
+                self.dp.qprint('Appending files to search space:\n')
+                self.dp.qprint("\n" + self.pp.pformat(l_filesHere))
         return {
             'status':   True,
             'l_dir':    l_dirs,
@@ -291,12 +322,15 @@ class dicomTag(object):
         for k, v in kwargs.items():
             if k == 'filelist':     l_files     = v
 
+        index   = 1
+        total   = len(l_files)
         for series in l_files:
             if len(self.str_extension):
                 series = [x for x in series if self.str_extension in x]
             if self.b_convertToImg:
                 if self.str_imageIndex == 'm':
-                    seriesFile = series[int(len(series)/2)]
+                    if len(series):
+                        seriesFile = series[int(len(series)/2)]
                     b_imageIndexed  = True
                 if self.str_imageIndex == 'f':
                     seriesFile = series[:-1]
@@ -310,7 +344,11 @@ class dicomTag(object):
                 seriesFile  = series[0]
             str_path = os.path.dirname(seriesFile)
             str_file = os.path.basename(seriesFile)
+            self.simpleProgress_show(index, total)
+            self.dp.qprint("Pruning path: %s" % str_path)
+            self.dp.qprint("Pruning file: %s" % str_file)
             d_prune[str_path] = str_file 
+            index += 1
         
         return {
             'status':   True,
@@ -323,16 +361,29 @@ class dicomTag(object):
         Return the tag information for given file.
         """
 
-        str_file        = ''
-        str_result      = ''
-        b_formatted     = False
-        str_outputFile  = ''
+        str_file            = ''
+        str_result          = ''
+        b_formatted         = False
+        str_outputFile      = ''
+
+        self.dcm            = None
+        self.d_dcm          = {}
+        self.d_dicom        = {}
+        self.d_dicomSimple  = {}
+
+        b_rawStringAssigned = False
 
         for k, v in kwargs.items():
             if k == 'file':     str_file    = v
 
         str_localFile      = os.path.basename(str_file)
+        self.str_json      = ''
+        self.str_dict      = ''
+        self.str_col       = ''
+        self.str_raw       = '' 
         if len(str_file):
+            self.dp.qprint("Analysing  in path: %s" % os.path.dirname(str_file))
+            self.dp.qprint("Analysing tags for: %s" % str_localFile)            
             self.dcm       = dicom.read_file(str_file)
             self.d_dcm     = dict(self.dcm)
             self.strRaw    = str(self.dcm)
@@ -368,21 +419,27 @@ class dicomTag(object):
                     b_formatted     = True
                 if str_outputFormat == 'col':
                     for tag in l_tagsToUse:
-                        self.str_col        += '%30s\t%s\n' % (tag , self.d_dicomSimple[tag])
+                        self.str_col        += '%70s\t%s\n' % (tag , self.d_dicomSimple[tag])
                     b_formatted     = True
                 if str_outputFormat == 'raw' or str_outputFormat == 'html':
                     for tag in l_tagsToUse:
-                        self.str_raw        += '%s\n' % (self.d_dicom[tag])
+                        if not b_rawStringAssigned:
+                            self.str_raw        += '%s\n' % (self.d_dicom[tag])
+                    if not b_rawStringAssigned:
+                        b_rawStringAssigned      = True
 
+            str_outputFile  = self.str_outputFileStem
             if '%' in self.str_outputFileStem:
-                pudb.set_trace()
+                b_tagsFound     = False
                 l_tags          = self.str_outputFileStem.split('%')[1:]
                 l_tagsToSub     = [i for i in self.l_tagRaw if any(i in b for b in l_tags)]
-                for tag in l_tagsToSub:
-                    self.str_outputFileStem = self.str_outputFileStem.replace('%' + tag, self.d_dicomSimple[tag])
-                str_outputFile  = self.str_outputFileStem
-            else:
-                str_outputFile  = self.str_outputFileStem
+                for tag, func in zip(l_tagsToSub, l_tags):
+                    b_tagsFound     = True
+                    str_replace     = self.d_dicomSimple[tag]
+                    if 'md5' in func:
+                        str_replace = hashlib.md5(str_replace.encode('utf-8')).hexdigest()
+                        str_outputFile = str_outputFile.replace('md5', '')
+                    str_outputFile  = str_outputFile.replace('%' + tag, str_replace)
 
         return {
             'formatted':        b_formatted,
@@ -432,41 +489,61 @@ class dicomTag(object):
                 %s
                     </pre>
                 </body>
-                </html> ''' % (str_inputFile, str_img, str_rawContent)
+                </html> ''' % (str_inputFile, str_img, "\n" + str_rawContent)
             return htmlPage
 
         self.mkdir(self.str_outputDir)
-        for path in self.d_outputTree:
+        l_path  = self.d_outputTree.keys()
+        total   = len(l_path)
+        index   = 0
+        for path in l_path:
+            index += 1
+            self.simpleProgress_show(index, total)
+            self.dp.qprint("Generating report for record: %s" % path)
             d_outputInfo    = self.d_outputTree[path]
             os.chdir(self.str_outputDir)
             self.mkdir(path)
             os.chdir(path)
+            if self.b_printToScreen:
+                print(d_outputInfo['dstr_result']['raw'])
             if self.b_convertToImg:
                 self.img_create(d_outputInfo['dcm'])
             for str_outputFormat in self.l_outputFileType:
                 if str_outputFormat == 'json': 
-                    with open(d_outputInfo['str_outputFile']+'.json', 'w') as f:
+                    str_fileName = d_outputInfo['str_outputFile']+'.json' 
+                    with open(str_fileName, 'w') as f:
                         f.write(d_outputInfo['dstr_result']['json'])
+                    self.dp.qprint('Saved report file: %s' % str_fileName)
                 if str_outputFormat == 'dict': 
-                    with open(d_outputInfo['str_outputFile']+'-dict.txt', 'w') as f:
+                    str_fileName = d_outputInfo['str_outputFile']+'-dict.txt' 
+                    with open(str_fileName, 'w') as f:
                         f.write(d_outputInfo['dstr_result']['dict'])
+                    self.dp.qprint('Saved report file: %s' % str_fileName)
                 if str_outputFormat == 'col': 
-                    with open(d_outputInfo['str_outputFile']+'-col.txt', 'w') as f:
+                    str_fileName = d_outputInfo['str_outputFile']+'-col.txt' 
+                    with open(str_fileName, 'w') as f:
                         f.write(d_outputInfo['dstr_result']['col'])
+                    self.dp.qprint('Saved report file: %s' % str_fileName)
                 if str_outputFormat == 'raw': 
-                    with open(d_outputInfo['str_outputFile']+'-raw.txt', 'w') as f:
+                    str_fileName = d_outputInfo['str_outputFile']+'-raw.txt' 
+                    with open(str_fileName, 'w') as f:
                         f.write(d_outputInfo['dstr_result']['raw'])
+                    self.dp.qprint('Saved report file: %s' % str_fileName)
                 if str_outputFormat == 'html': 
-                    with open(d_outputInfo['str_outputFile']+'.html', 'w') as f:
+                    str_fileName = d_outputInfo['str_outputFile']+'.html' 
+                    with open(str_fileName, 'w') as f:
                         f.write(
                             html_make(  d_outputInfo['str_inputFile'],
                                         d_outputInfo['dstr_result']['raw'])
                         )
+                    self.dp.qprint('Saved report file: %s' % str_fileName)
                 if str_outputFormat == 'csv':
-                    with open(d_outputInfo['str_outputFile']+'.csv', 'w') as f:
+                    str_fileName = d_outputInfo['str_outputFile']+'-csv.txt' 
+                    with open(str_fileName, 'w') as f:
                         w = csv.DictWriter(f, d_outputInfo['d_dicomJSON'].keys())
                         w.writeheader()
                         w.writerow(d_outputInfo['d_dicomJSON'])
+                    self.dp.qprint('Saved report file: %s' % str_fileName)
                 
     def run(self):
         '''
@@ -484,10 +561,15 @@ class dicomTag(object):
         d_tree          = self.dirTree_create(root = ".")
         d_filtered      = self.dirTree_prune(filelist = d_tree['l_files'])
 
+        i_items         = d_filtered['d_prune'].items()
+        total           = len(i_items)
+        index           = 0
         for k, v in d_filtered['d_prune'].items():
+            index += 1
+            self.simpleProgress_show(index, total)
             self.d_outputTree[k]    = self.tagsFindOnFile(file = os.path.join(k, v))
 
-        pudb.set_trace()
+        # pudb.set_trace()
         self.outputs_generate()
         os.chdir(str_cwd)
 
@@ -632,6 +714,12 @@ def synopsis(ab_shortOnly = False):
         [-y|--synopsis]
         Show brief help.
 
+        -v|--verbosity <level>
+        Set the app verbosity level. 
+
+             -1: No internal output.
+              0: All internal output.
+
     EXAMPLES
 
         o See https://github.com/FNNDSC/scripts/blob/master/dicomTag.py for more help and source.
@@ -704,6 +792,10 @@ if __name__ == '__main__':
                         dest    = 'synopsis',
                         action  = 'store_true',
                         default = False)
+    parser.add_argument("-v", "--verbosity",
+                        help    = "verbosity level for app",
+                        dest    = 'verbosity',
+                        default = "0")
     args = parser.parse_args()
 
     if args.man or args.synopsis:
@@ -724,7 +816,8 @@ if __name__ == '__main__':
                             tagFile             = args.tagFile,
                             tagList             = args.tagList,
                             printToScreen       = args.printToScreen,
-                            imageFile           = args.imageFile
+                            imageFile           = args.imageFile,
+                            verbosity           = args.verbosity
                         )
 
     # And now run it!
